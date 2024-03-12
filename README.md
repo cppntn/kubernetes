@@ -120,7 +120,7 @@ kubectl get pods
 
 This just deploys a pod, but later we'll see how to make this accessible from the outside world.
 
-You can create pods using YAML based configuration file. Kubeernetes uses YAML files as inputs for the creation of objects such as pods, replicas, deployments, services, etc...
+You can create pods using YAML based configuration file. Kubernetes uses YAML files as inputs for the creation of objects such as pods, replicas, deployments, services, etc...
 Similar structure with 4 top-level fields:
 
 -- `pod-definition.yml`
