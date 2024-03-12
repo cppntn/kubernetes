@@ -21,4 +21,35 @@ Everything has to be container compatible: applications, different components th
 
 ### Docker vs ContainerD
 
-docker is the most dominant container tool. Kubernetes was built to orchestrate docker in the beginning. Then Kubernetes grew in popularituy and also started to support containerd and rkt.
+Docker is the most dominant container tool. Kubernetes was built to orchestrate docker in the beginning. Then Kubernetes grew in popularituy and also started to support containerd and rkt.
+
+### ETCD
+
+Key-value store. Differently from relational databases, k-v stores information in the form of k-v pages. k-v translates easily into JSON or YAML. 
+
+```bash
+# first install etcd
+
+# it starts a server that listens on port 2379 by default
+./etcd 
+
+# the client, to store or get a key value pair
+
+./etcdctl set key1 value1
+./etcdctl get key1
+```
+
+With kubeadm etcd runs as a container in the master node; in case of a cluster of master nodes, you need to specify the cluster IPs of all the etcd servers in order to get them known by each other.
+
+### kube-api server
+
+Primary management component in kubernetes. When you run a `kubectl` command, this actually reaches the kube-api server, which first authenticates the request and validates it. Instead of using the `kubectl` you could as well use API requests.
+
+What happens when creating a pod: the request is authenticated, validated, then the API server creates the pod object without assigning it to a node, updates the info into the ETCD cluster, updates the user that the pod has been created; then the scheduler continuosly monitors the API server and realizes that there is a new pod without a node assigned. The scheduler identifies the right node to place the new pod on and communicates that back to the API server. The API updates the info into the ETCD cluster. The API server then passes that information to the kubelet in the appropriate worker node. The kubelet then creates the pod on the node and instructs the container runtime engine to deploy the application image. Once done, the kubelet updates the status back to the API server, and the API server updates the data back in the ETCD cluster.
+
+A similar pattern is followed every time a change is requested: the API server is at the center of all the different tasks that need to be performed to make a change in the cluser.
+The kube-api server is responsbile for:
+- authenticate and validate request
+- retrieve and update data in the ETCD store, infact kube-api is the only component that interacts directly with the ETCD
+- scheduler uses API server to perform updates in the cluster
+- communicate with the kubelet
