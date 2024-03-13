@@ -155,3 +155,294 @@ kubectl describe pod myapp-prod
 ```
 
 If you are creating a new object you can either use apply or create.
+
+### Replication Controller
+
+This is one controller in particular. What is a replica? If our app crashes and fails, to prevent users from losing access, we'd like to have more than 1 pod running. Replication controller helps us run multiple instances of a single pod in the kubernetes cluster, providing high availability. Even if you have a single pod, replication controller can help by automatically bringing up the new pod when the existing one fails.
+
+Another application of replication controller is to create multiple pods to share the load across them. When the number of users increase, we deploy additional pods to balance the load across the 2 pods. If the demand further increase and we run out of resources on the first node, we could deploy additional pods across other nodes in the cluster. Replication controller spans across multiple nodes in the cluster.
+
+Replication controller is the older technology, now replaced by ReplicaSet. ReplicaSet is the new recommended technology. 
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: myapp-replicaset
+  labels:
+    app: myapp
+    type: front-end
+spec:
+  template:
+    metadata:
+      name: myapp
+      labels: 
+        app: myapp
+        type: front-end
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx
+  replicas: 3
+  selector: 
+    matchLabels:
+      type: front-end
+```
+
+in the template we simply add what we already had in the pod yaml (withou apiVersion and kind), then also add the replicas number. The selector is necessary in the ReplicaSet because ReplicaSet can also manage pods that were not created with it, i.e. are not in the template section. Selector is the major difference between ReplicaSet and Replication Controller. RC assumes that selector is the pod in the template, instead RS needs this selector.
+
+The role of the ReplicaSet is to monitor the pods and provision the exact number of pods if any of them fails. We use the matchLabels filter to provide the label for the pods we want to replicate. Template definitino is also required in the ReplicaSet, even if the pods were run created in another yaml; this is because ReplicaSet needs to know the spec when spawning new pods.
+
+How we scale the ReplicaSet? What if we decide to scale to 6? There are two ways:
+1) Update the number of replicas in the yaml to 6 and run `kubectl replace -f replicaset.yml`
+2) Run `kubectl scale --replicas=6 -f replicaset.yml` or `kubectl scale --replicas=6 replicaset myapp-replicaset`
+
+Second option will not update the number of replicas in the yaml.
+
+Some useful commands:
+```bash
+kubectl create -f replicaset.yml
+kubectl get replicaset
+kubectl delete replicaset myapp-replicaset
+kubectl replace -f replicaset.yml
+kubectl scale --replicas=6 -f replicaset.yml
+kubectl scale --replicas=6 replicaset myapp-replicaset
+kubectl edit replicaset myapp-replicaset
+```
+
+### Deployments
+
+How to deploy your app in a production environment? Rolling updates (update pod in production one by one); if errors, rollback to previous container.
+
+So far: container in pods, multiple pods are deployed using replicasets, and then comes deployment, which provides use with the capability to update the underlyings (replicaset) using rolling updates, undo changes, etc...
+
+
+The content of the Deployment is identical to the ReplicaSet, except the kind
+
+
+```bash
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-replicaset
+  labels:
+    app: myapp
+    type: front-end
+spec:
+  template:
+    metadata:
+      name: myapp
+      labels: 
+        app: myapp
+        type: front-end
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx
+  replicas: 3
+  selector: 
+    matchLabels:
+      type: front-end
+```
+
+Some useful commands:
+```bash
+kubectl apply -f deployment.yml
+kubectl get deployments
+kubectl get replicaset
+kubectl get pods
+```
+
+The deployment automatically creates the replicaset. And the replicaset ultimately creates pods.
+
+```bash
+kubectl get all
+```
+
+TIP: use these commands to generate yml files (dry run them!!)
+
+```bash
+kubectl run nginx --image=nginx --dry-run=client -o yaml > pod.yaml
+kubectl create deployment --image=nginx nginx --dry-run=client -o yaml > deployment.yaml
+```
+
+### Services
+
+Services enable communication between various componentes within and outside of the application. Services help us connect applications together.
+For example we have pods exposed to users, pods for the backend, and pods that communicate with external data sources.
+
+Services enable connectivity for the frontend pods to the end users, communication between frontend and backend, and connectivity between other pods and external data sources.
+
+Example of a use case:
+
+External communication: we deployed our pod. How do we access as external user? Let's look ad the existing setup. The kubernetes node as an IP address (192.168.1.2) and my pc is on the same network with IP 192.168.1.10. Moreover, the internal pod network is in the range 10.244.0.0 and the pod as an IP 10.244.0.2.
+I cannot access the pod ad 10.244.0.2 as it is in a separate network. If we ssh into the kubernetes node, from the node we would be able to curl 10.244.0.2; But this is from inside the kubernetes node. I want to be able to access the webserver from the external. We need something in the middle to help us map requests. 
+This is where kubernetes service comes in. It is an object, just like pod, replicaset, etc...
+The use case of the service is to listen to a port on the node and forward requests on that port to a port on the pod running the application. This kind of application is called NodePort service, because the service listens to a port on the node and forwards requests to the pods. NodePort service has also its own ClusterIP address.
+
+We have other types of services:
+- NodePort: service makes an internal pod accessible on a port on the node
+- ClusterIP: the service creates a virtual IP inside the cluster to enable communication between different services such as a set of frontend servers to a set of backend servers
+- LoadBalancer: to distribute load across different webservers
+
+
+#### NodePort
+
+3 ports involved: one port on the pod (target port, where the service forwards the requests to), one port on the service itself (just the port), and the port on the node (the node port).
+
+NodePorts can only be in a valid range, which by default is from 30000-32767.
+
+
+service-definition.yml
+```bash
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp-service
+spec:
+  type: NodePort
+  ports:
+  - targetPort: 80
+    port: 80
+    nodePort: 30008
+  selector:
+    app: myapp
+    type: front-end
+
+```
+
+targetPort is the port on the pod, port is the service object's port, and nodePort is the port on the node. If you don't provide a targetPort, it'll assume is the same as port. If you don't provide nodePort, it will pick one free port in the range 30000-32767. 
+We then use label and selector to connect the pod.
+
+```bash
+kubectl create -f service-definition.yml
+kubectl get services
+```
+
+If you have more than one pod with same labels, the nodeport service automatically selects all the pods as endpoints to forward the requests. The nodeport uses a random algorithm to balance the load across the pods. The nodeport service acts then as a load balancer.
+
+What happens when pods are distributed across multiple nodes? Kubernetes will span the service accross all the nodes and maps the target port to the same node port on all the nodes in the cluster. This way you can access your application using the IP of any of the nodes in the cluster and the port.
+To summarize: whether it will be a single pod on a single node, multiple pods on a single node, or multiple pods on multiple nodes, the service NodePort is created exactly in the same way. Without us having to do any additional steps.
+
+
+#### ClusterIP
+
+A full-stack application typically has different kinds of pods hosting different parts of an application: pods for fronted, pods for backend, pods for mysql, etc...
+
+The frontend servers needs to communicate to backend servers and backend needs to communicate with databases. How to estabilish connectivity between these services or tiers of my app? The pods all have an IP address assign to them, but these IPs are not static; if a pod goes down, another one is recreated but with a new IP address. So we cannot rely on these IP addresses for internal communication. 
+A kubernetes server can help us group together an provide a single interface to access the pods in a group. For example, a service created for the backend part, will help group the backend part together and provide a single interface for other pods to access the backend.
+
+This enables us to deploy a microservices based application on kubernetes.
+
+Each layer can now scale or move without impacting communication between tiers.
+Each service gets an IP, a name assigned to it, inside the cluster, and that is the name that should be used by other pods to access the service. 
+This type of service is known as ClusterIP.
+
+service-definition.yml
+```
+apiVersion: v1
+kind: Service
+metadata:
+    name: back-end
+spec:
+    type: ClusterIP
+    ports:
+    - targetPort: 80
+      port: 80
+    selector:
+      app: myapp
+      type: back-end
+```
+
+ClusterIP is the default type for Service. targetPort is the port where the backend is exposed; and the port is where the service exposes. To link the service to a set of pods we use the selector to match labels.
+
+```bash
+kubectl create -f service-definition.yml
+kubectl get services
+```
+
+#### Load Balancer
+
+Kubernetes can integrate with cloud native LB. Set the service type to LoadBalancer instead of NodePort. 
+
+service-definition.yml
+```
+apiVersion: v1
+kind: Service
+metadata:
+    name: back-end
+    
+spec:
+    type: LoadBalancer
+    ports:
+    - targetPort: 80
+      port: 80
+      nodePort: 30008
+    selector:
+      app: myapp
+      type: back-end
+```
+
+### Namespaces
+
+We were doing stuff inside the `default` namespace. Kubernetes creates a set of pods and services for its internal purposes to isolate this from the user under another namespace, named `kube-system`. A third namespace is created as `kube-public`, where all resources available to all the users are created.
+
+You can create your own namespace as well: for example if you want to create staging and production in the same cluster, you can use namespaces to not affect accidentally the wrong environment. You can also assign resources to each namespace.
+
+`name-of-the-service.namespace.svc.cluster.local`
+
+```
+kubectl get pods --namespace=kube-system
+```
+
+To create the pod in another namesace use the --namespace arg in the command, or add it in the metadata section for the pod yml.
+
+How to create a namespace?
+
+```bash
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: dev
+```
+
+By default, you are in the default namespace.
+To stick to a namespace without specifying the --namespace option every time, just do:
+
+```
+kubectl config set-context $(kubectl config current-context) --namespace=dev
+```
+
+To view pods in all namespaces:
+```
+kubectl get pods --all-namespaces
+```
+
+Create a resource quota to set limits on namespaces:
+
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+    name: compute-quota
+    namespace: dev
+spec:
+    hard: 
+        pods: "10"
+        requests.cpu: "4"
+        requests.memory: 5Gi
+        limits.cpu: "10"
+        limits.memory: 10Gi
+```
+
+
+## Imperative vs Declarative approaches
+
+In the IaaC world there are different approaches in managing the infrastructure.
+Declarative: final state (the system already know what is done at any time and only applies changes needed to reach the final state)
+Imperative: step-by-step instructions
+
+With declarative approach just use `kubectl apply -f deployment.yml` every time you want, both during creation and during update.
+
+Managing object with manifest files (yml) can help us have the final state of the object as we want it.
