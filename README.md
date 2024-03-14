@@ -529,3 +529,85 @@ When an object is created, kubernetes creates a live object configuration intern
 local file YML -> kubernetes live object YML -> last applied JSON
 
 last applied JSON is stored as an annotation in the live object in kubernetes memory.
+
+## Scheduling
+
+### Manual Scheduling
+
+If you want to schedule the pod yourself: every pod has a field called nodeName, which you don't usually set. Kubernetes sets the nodeName automatically. The scheduler goes through all the pods and looks for those that do not have this propoerty set. Those are the candidates for scheduling. It then identifies the right node for the pod by running the scheduling algorithm. Once identified, it schedules the pod on the node by setting the nodeName property to the name of the node, by creating a binding object.
+
+If there's no scheduler to monitor and schedule pods, the pod remains in a pending state. So you have to do it yourself manually by setting the nodeName property (it's a sibling of containers field). The pod then gets assigned to specified node.
+You can only specify the node for a pod at creation time; to assign a different node to a pod, Kubernetes does not allow you to modify the nodeName property of a pod.
+So in order to assign a node to an existing pod is to create a Binding object:
+
+```pod-bind.yaml
+apiVersion: v1
+kind: Binding
+metadata:
+    name: nginx
+target:
+    apiVersion: v1
+    kind: Node
+    name: node02
+```
+
+### Labels and selectors
+
+Labels and selectors are a standard method to group things together, with one or multiple criteria. Labels are properties attached to each object, and selectors are filter you can use.
+They are just tags. 
+We have a lot of different types of objects in Kubernetes: pods, services, replicasets, deployments, etc... Over time you may end up having hundreds of these objects, and you need a way to view these categorised by type or application of functionality or whatever.
+For each object attach labels as per your needs.
+
+How do you specify labels? In metadata field, add labels, in key value format. Add as many labels as you like.
+You can get the object with --selector option
+
+```bash
+kubectl get pods --selector app=App1
+```
+
+Kubernetes also uses labels and selector internally to connect different objects together, for example to create a ReplicaSet with 3 pods you need to specify the selector in the ReplicaSet to match with the labels of the pod. It also works with services, you need the selector to attach a service to pods.
+
+Annotations are instead used to record other details. `annotations` is a sibling of `labels` in `metadata`.
+
+### Taints and tolerations
+
+What pods are placed on what nodes. Taints and tolerations have nothing to do with security, they are used to set restrictions on what pods are scheduled on a node.
+
+Suppose a node, node01, we place a Taint=blue; we have to specify which pods are tolerant to Taint=blue; we add a toleration to pod D, and so pod D can go to node 1.
+
+```
+kubectl taint nodes node-name key=value:taint-effect
+```
+
+taint-effect defines what happens to the pod if it can't tolerate the node:
+- NoSchedule: the pod will not be scheduled on the node
+- PrefereNoSchedule: avoid but not guaranteed
+- NoExecute: new pods will not be scheduled on the node and existing pods on the node will be evicted if they do not tolerate the taint
+
+```
+kubectl taint nodes node01 app=blue:NoSchedule
+```
+
+then, as a sibling of containers in the spec of a pod, add a section called tolerations:
+
+```yaml
+tolerations:
+- key: "app"
+  operator: "Equal"
+  value: "blue"
+  effect: "NoSchedule"
+
+```
+
+master node already has a taint set to NoSchedule to prevent pods to be created on the master node.
+
+to remove a taint, just put the minus symbol at the end of the taint command:
+
+```
+kubectl taint nodes node01 app=blue:NoSchedule-
+```
+
+
+### Node Affinity
+
+
