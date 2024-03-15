@@ -608,6 +608,136 @@ kubectl taint nodes node01 app=blue:NoSchedule-
 ```
 
 
+### Node Selectors
+
+Suppose we have 2 small nodes and 1 big node, with more resources. In the current default setup, any pod can go to any node. We can set a limitation on the pod so that they only run on particular nodes.
+
+In the pod definition file, add as a sibling of the containers called nodeSelector
+
+```
+nodeSelector:
+    size: Large
+```
+
+size: Large is a k-v pair assigned previously to the node we want. 
+
+How we can label the node?
+```
+kubectl label nodes node01 size=Large
+```
+
+When the pod is created, is created on the node01 as desired. What if we want to place the pod on any node that is not small, but only to nodes labeled as Large or Medium. We need to leverage Node Affinity for this.
+
 ### Node Affinity
+
+we nede to specify a sibling of the containers in the pod definition:
+
+```yaml
+affinity:
+    nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: size
+                operator: NotIn
+                values:
+                - Small
+```
+
+What if we have no match for the nodes?
+
+we also have another type of node affinity:
+
+`preferredDuringSchedulingIgnoredDuringExecution`
+
+During scheduling is the state when the pod is first created; what if the nodes with matching labels are not available? If you select the required, the pod will not be scheduled.
+If you select preferred, the pod will be scheduled on another node.
+
+IgnoredDuringExecution: pods will continue to run despite any change in node affinity, once they are scheduled.
+
+We also have `requiredDuringSchedulingRequiredDuringExecution`, where the pod will be evicted if the node affinity changes.
+
+### Resource Requirements and Limits
+
+Each node as a CPU and Memory available. Then we have pods, and every pods consume a number of CPU and Memory. 
+To do this, add a `resources` field into the `containers` field
+
+```bash
+containers:
+    resources:
+        requests:
+            memory: "4Gi"
+            cpu: 2
+        limits:
+            memory: "8 Gi"
+            cpu: 4
+```
+
+1 count of CPU is 1 vCPU, and you can specify as low as 1m (0.001). So 100m is 0.1, for example. With memory you can either specify G or Gi depending on GB or GiB.
+If the container goes beyond the limits, it's ok for CPU because is throttled, but for Memory it will throw an Out of Memory error and the pod terminates.
+
+By default CPU and Memory do not have requests or limit, so any pod can use as much as it can.
+
+
+If you don't specify requests, but specify limits, requests are set to the same limits. Setting requests but not limits, any pod can consume as many as it wants. And this is the most ideal scenario, to guarantee a minimum with requests, but without limits.
+
+For memory is similar: one pod can consume all memory if limits are not set. If we have limits only, requests are set to be similar to limits. But unlike CPU the Memory cannot throttle, so we have to kill the pod to free memory.
+
+We can use LimitRange to set default values for containers, and it is applied at a namespace level. This only affects new pods created or updated after the LimitRange creation.
+
+To restrict the total amount of resources in a cluster, we can create ResourceQuota at a namespace level: hard limits and hard requests. This limits the total requests and limits consumed by all the pods together in the namespace.
+
+### Daemon Sets
+
+Daemon Sets are like Replica Sets, but it runs one copy of your pod in each node of the cluster. Whenever a new node is added to the cluster, a new pod replica is added automatically to the node. The DaemonSet ensures that one replica of the pod is present on every node.
+
+Use cases: monitoring, log collector, to be deployed on each node. One of the worker node components that is required in every node is the kube-proxy, and can be deployed as a daemon set. 
+
+```
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+    name: monitorin-daemon
+spec:
+    selector:
+        matchLabels:
+            app: monitoring-agent
+    template:
+        metadata:
+            labels:
+                app: monitoring-agent
+        spec:
+            containers:
+            - name: monitoring-agent
+              image: monitoring-agent
+```
+
+The YAML is exactly like the ReplicaSet, except the kind is DaemonSet
+
+```
+kubectl create -f daemon.yml
+kubectl get daemonsets
+```
+
+How does it schedule a pod on each node? It uses the default scheduler and the node affinity rules to schedule pods on all nodes.
+
+
+### Static Pods
+
+What if you only have a node, no part of any cluster, no master, no kube-api server, notihing, just a node: is there anything the kubelet can do? Who can provide instructions to create pods?
+
+The kubelet can manage a node independently, without a k8s cluster, and without a kubeapi-server. How to create a pod? You can configure the kubelet to read the pod configuration files YAML. The kubelet periodically checks the files, and the kubelet takes changes accordingly. If you remove the file, the pod is deleted automatically. These are static pods. You cannot create replicasets, deployments, daemonsets. Only pods.
+
+The kubelet works at a pod level, and can only understand pods.
+
+The directory for the kubelet to read can be any directory, and is passed when running the kubelet service with the `--config=kubeconfig.yaml` option
+
+Into kubeconfig.yaml you'll have `staticPodPath: /etc/kubernetes/manifest` which is the directory where pods yaml are stored.
+We don't have the rest of the kubernetes cluster, so we don't have kubectl. We can only use docker. If you attach later a kubernetes cluster, kubectl will see the pods created by the kubelet.
+
+But WHY you want to use static pods? The use case is to deploy the controlplane node itself, where every pod is a controlplane component, so you don't have to worry about installing kubernetes binaries but just dockerize the master node components.
+
+The kube-scheduler has no effects on both static pods and daemonsets.
+
 
 
