@@ -128,15 +128,14 @@ Similar structure with 4 top-level fields:
 apiVersion: v1
 kind: Pod
 metadata:
-    name: myapp-prod
-    labels:
-        app: myapp
-        type: front-en
+  name: myapp-prod
+  labels:
+    app: myapp
+    type: front-en
 spec:
-    containers:
-        - name: nginx-controller
-          image: nginx
-        
+  containers:
+  - name: nginx-controller
+    image: nginx
 ```
 
 `apiVersion`: we must use the right API version, v1 for pod and service, `apps/v1` for ReplicaSet and Deployment.
@@ -740,4 +739,60 @@ But WHY you want to use static pods? The use case is to deploy the controlplane 
 The kube-scheduler has no effects on both static pods and daemonsets.
 
 
+### Multiple Schedulers
 
+By default scheduler distributes pods across nodes et cetera... but what if this does not satisfy your needs? What if you have to place pods on nodes after additional steps and custom conditions? Kubernetes is extensible, you can write your own kubernetes scheduler, package it and deploy it as the default scheduler (or additional scheduler). 
+
+You kubernetes cluster can have multiple scheduler at a time. You can instruct to have a pod scheduled by a specific scheduler.
+
+The default schedulder is the `default-scheduler`. To create another scheduler you have to create a separate configuration file.
+
+
+```yaml
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+profiles:
+    - schedulerName: my-custom-scheduler
+```
+
+then:
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+    name: my-custom-scheduler
+    namespace: kube-system
+spec:
+    containers:
+    - command:
+      - kube-scheduler
+      - --address=127.0.0.1
+      - --kubeconfig=/etc/kubernetes/scheduler.conf
+      - --config=/etc/kubernetes/my-scheduler-config.yaml
+
+      image: k8s.gcr.io/kube-scheduler-amd64:v1.11.3
+      name: kube-scheduler 
+```
+
+How can we specify a pod to use this scheduler? Set the `schedulerName` value (a sibling of `containers`) into a pod that you want to be scheduled with a custom scheduled.
+
+How to know which scheduler picked up the a certain pod?
+
+```bash
+kubectl get events -o wide
+```
+
+Get events and see which scheduler picked which pod.
+Or you can see the logs:
+
+```bash
+kubectl logs my-custom-scheduler --namespace=kube-system
+```
+
+P.S. Get serviceaccount and clusterrolebinding (we'll see these later)
+
+```bash
+kubectl get serviceaccount -n kube-system
+kubectl get clusterrolebinding
+```
