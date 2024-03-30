@@ -796,3 +796,313 @@ P.S. Get serviceaccount and clusterrolebinding (we'll see these later)
 kubectl get serviceaccount -n kube-system
 kubectl get clusterrolebinding
 ```
+
+### Scheduler Profiles
+
+Pods end up in a scheduling queue, and they are put on nodes by scheduler based on a priority value:
+You can set priority in a `priorityClassName` with value `high-priority`, and is a sibling of `containers`.
+
+Pods go through schedulingQueue->filtering->scoring->binding
+
+- schedulingQueue: prioritySort
+- filtering: NodeResourcesFit (filters out nodes that have no sufficient resources) or NodeName or NodeUnschedulable (like the control-plane node)
+- scoring: NodeResourcesFit (same plugin as before that gives a score to each node, giving a high score to nodes that would have most resources left after placing the pod) or ImageLocality (give a higher score to nodes where the pod is already present)
+- binding: DefaultBinder (provides the binding mechanism)
+
+It's possible to customize what plugins go where: This is achieved with extension points, to which plugin can be plugged to. At each stage there is an extension point. There are also extension preFilter and postFilter, or preScore, preBind, postBind. Basically you can get a custom code on your own to plug a plugin where you want.
+
+How we can change the default behaviour of how these plugins are called?
+Suppose you have 2 custome scheduler and the default scheduler. This is one way to deploy multiple schedulers. But since they are separate processes we can run into race conditions when having all of them trying to schedule pods.
+
+In a single scheduler instead you can use multiple profiles, so that you can have different scheduling strategies that run into the same binary.
+
+```
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+profiles:
+- schedulerName: my-scheduler-1
+  plugins:
+    score:
+      disabled:
+      - name: TaintToleration
+      enabled:
+      - name: MyCustomPluginA
+      - name: MyCustomPluginB
+- schedulerName: my-scheduler-2
+  plugins:
+    preScore:
+      disabled:
+      - name: ...
+    score:
+      disabled:
+      - name: ...
+- schedulerName: my-scheduler-3
+```
+
+## Logging and Monitoring
+
+What would you like to monitor? Number of nodes in the cluster, how many of them are healthy, CPU, memory and Disk Utilization, etc... We need a solution that will monitor these metrics, store them and provide analytics for these data. There are a number of open source solutions (Prometheus, ELK) to show analytics.
+
+Kubernetes runs a kubelet on each node. The kubelet also contains a subcomponent, called `cAdvisor`, responsible for retrieving performance metrics from pods and expose them throught the kubelet api to make them available. 
+
+To deploy the metrics-server you clone the manifest from github and deploy it with `kubectl create -f ...`
+
+This command deploys a set of pods, services and roles to enable metrics server to poll metrics. After some time, the data will be collected and processed, and you can view metrics with:
+
+For nodes:
+```
+kubectl top node
+```
+
+For pods:
+```
+kubectl top pod
+```
+
+### Managing application logs
+
+Docker streams log events to stdout. If I run a docker detached I could not see the logs, I have to run `docker logs -f` to see the logs. 
+
+In kubernetes we can view the logs with:
+
+```
+kubectl logs -f name-of-the-pod
+```
+
+These logs are specific to the container running inside the pod. If you have more than one container in a pod, you must specify the name of the container.
+
+```
+kubectl logs -f name-of-the-pod name-of-the-container
+```
+
+## Application Lifecycle Management
+
+We'll see rolling updates and rollbacks in deployments, the different ways to configure applications, scale applications, and primitives of self-healing applications.
+
+### Rolling updates and rollbacks
+
+In a deployment, when you first create it, it triggers a rollout, and a new rollout creates a new deployment revision. Let's call it revision 1. In the future, when the container version is updated, a new rollout is triggered and a revision 2 is created. This helps keep track of our deployments and roll back to previous revisions if necessary.
+
+```
+kubectl rollout status deployment/deployment-name
+```
+
+To see the revisions and history
+
+```
+kubectl rollout history deployment/deployment-name
+```
+
+There are 2 types of deployments strategies. Say you have 5 replicas of your pod. One way to upgrade is to detroy all of them and create newer versions. First destroy, then create. The problem with this is that you experience a downtime and users cannot access the webapp. But this is not the default deployment strategy. 
+A second strategy is to take down and bring up a new version one by one, and in this way the application does not go down. This is the rolling update strategy, which is also the default strategy.
+
+How exactly do you update the deployment? For example you update the version of the docker image used, or you update the number of replicas. You modify the manifest file and then run the `kubectl apply -f deploy.yaml` to apply the changes. A new rollout is triggered and a new revision of the deployment is created.
+
+You can also set the image manually, but be aware that you will have to change the manifest file accordingly:
+
+```
+kubectl set image deployment/deployment-name <container-name>=<image-name>:<image-tag>
+```
+
+If you run `kubectl describe deployment` command you can see which strategy has been used.
+
+How a deployment perform an upgrade under the hoods?
+
+It first creates the new ReplicaSet and starts deploying the containers there, and in the meantime it brings down the pods in the old ReplicaSet, one by one. 
+
+If you notice errors and would like to rollback, you can undo a change with:
+
+```bash
+kubectl rollout undo deployment/deployment-name
+```
+
+To notice the different before and after the rollout, run `kubectl get replicasets`
+
+
+Create: `kubectl create -f deployment.yml`
+Get: `kubectl get deployments`
+Update: `kubectl apply -f deployment.yml`
+Status: `kubectl rollout status deployment/deployment-name`
+History: `kubectl rollout history deployment/deployment-name`
+Rollback: `kubectl rollout undo deployment/deployment-name`
+
+To change the deployment strategy:
+
+```
+kubectl edit deploy frontend
+```
+
+Then change the strategy type to `Recreate`, and save the file.
+
+Then verify with `kubectl describe deploy frontend`
+
+### Configure Applications
+
+Application commands and arguments and entrypoints in docker.
+
+When you run a docker, you can append a command that overrides the `CMD` in the Dockerfile: 
+
+```
+docker run ubuntu sleep 5
+```
+
+How do you make this permanent? You can create another Dockerfile and specify a new `CMD`.
+
+To set arguments:
+
+```docker
+FROM ubuntu
+ENTRYPOINT ["sleep"]
+```
+
+With entrypoint all the arguments are appended. so `5` will be appended.
+
+To configure a deafult value to append, you can use both `ENTRYPOINT` and `CMD`.
+
+```docker
+FROM ubuntu
+ENTRYPOINT ["sleep"]
+CMD ["5"]
+```
+
+To override during run:
+
+```
+docker run --entrypoint nosleep ubuntu-sleeper 10
+```
+
+Let's see commands and arguments in a kubernetes pod.
+
+Given this as `ubuntu-sleeper`:
+
+```docker
+FROM ubuntu
+ENTRYPOINT ["sleep"]
+CMD ["5"]
+```
+
+You use this pod with args to be appended
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ubuntu-sleeper-pod
+spec:
+  containers:
+  - name: ubuntu-sleeper
+    image: ubuntu-sleeper
+    args: ["10"]             ## this overrides the CMD
+    command: ["sleep2.0"]    ## this overrides the entrypoint
+```
+
+### Environment Variables
+
+You can hard code env variables, or retrieve them from ConfigMaps and Secrets.
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ubuntu-sleeper-pod
+spec:
+  containers:
+  - name: ubuntu-sleeper
+    image: ubuntu-sleeper
+    args: ["10"]             ## this overrides the CMD
+    command: ["sleep2.0"]    ## this overrides the entrypoint
+    env:
+    - name: APP_COLOR
+      value: pink
+    - name: APP_COLOR_FROM_CONFIGMAP
+      valueFrom:
+        configMapKeyRef:
+    - name: APP_COLOR_FROM_SECRETS
+      valueFrom:
+        secretKeyRef: 
+```
+
+
+### Configuring ConfigMaps in applications
+
+1) Create the ConfigMap
+2) Inject into the pod
+
+
+There is an imperative way, you can directly specify the configmap.
+```bash
+kubectl create configmap \
+    app-config --from-literal=APP_COLOR=blue
+```
+
+or imperative from a file
+```bash
+kubectl create configmap \
+    app-config --from-file=app_config.properties
+```
+
+But a declarative approach is better, with a file `config-map.yml`:
+
+```bash
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_COLOR: blue
+  APP_MODE: prod
+```
+
+And then create the config map:
+```
+kubectl create -f config-map.yml
+```
+
+To view configmaps:
+
+```
+kubectl get configmaps
+```
+or 
+```
+kubectl describe configmaps
+```
+
+Now, to use them in a pod:
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ubuntu-sleeper-pod
+spec:
+  containers:
+  - name: ubuntu-sleeper
+    image: ubuntu-sleeper
+    envFrom:
+    - configMapRef:
+      name: app-config
+```
+
+But you can also give them one by one
+
+```
+env:
+- name: APP_COLOR
+  valueFrom:
+    configMapKeyRef: 
+      name: app-config
+      key: APP_COLOR
+```
+
+or into volumes:
+
+```
+volumes:
+- name: app-config-volume
+  configMap:
+    name: app-config
+```
+
+
+
