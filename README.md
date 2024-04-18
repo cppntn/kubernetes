@@ -1104,5 +1104,154 @@ volumes:
     name: app-config
 ```
 
+### Configure Secrets in applications
+
+ConfigMaps store config data in plain text format, but definitely not the right place to store a password. Secrets are used to store sensitive information.
+They are stored in an encoded format.
+There are 2 ways to create a secret:
+
+1) Imperative
+
+```
+kubectl create secret generic <secret-name> --from-literal=<key>=<value>
+kubectl create secret generic app-secret --from-literal=DB_HOST=mysql
+```
+
+If you have multiple secrets, and want to create them in an imperative way, use a file:
+```
+kubectl create secret generic <secret-name> --from-file=app_secret.properties
+```
+
+2) Declarative using .yaml file
+
+```
+kubectl create -f secrets.yaml
+```
+
+Create a definition file:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+data:
+  DB_HOST: mysql
+  DB_USER: root
+  DB_PASSWORD: password
+```
+
+But it's safer to encode data in base64 encoded format:
+
+```
+echo -n 'mysql' | base64
+echo -n 'root' | base64
+echo -n 'password' | base64
+```
+
+
+So now we have:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+data:
+  DB_HOST: bXlzcWw=
+  DB_USER: cm9vdA==
+  DB_PASSWORD: cGFzc3dvcmQ=
+```
+
+List newly created secrets:
+
+```
+kubectl get secrets
+kubectl describe secrets
+```
+
+But this hides the values. To view the value of the secrets do:
+
+```
+kubectl get secret app-secret -o yaml
+```
+
+To decode encoded values do:
+
+```bash
+echo -n 'bXlzcWw=' | base64 --decode
+```
+
+Now, to use them in a pod:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ubuntu-sleeper-pod
+spec:
+  containers:
+  - name: ubuntu-sleeper
+    image: ubuntu-sleeper
+    envFrom:
+    - configMapRef:
+        name: app-config
+    - secretRef:
+        name: app-secret
+```
+
+
+But you can also give them one by one
+
+```yaml
+env:
+- name: APP_COLOR
+  valueFrom:
+    secretKeyRef: 
+      name: app-secret
+      key: DB_HOST
+```
+
+or into volumes:
+
+```yaml
+volumes:
+- name: app-secret-volume
+  secret:
+    secretName: app-secret
+```
+
+If you were to mount the secret as a volume in the pod, each attribute in the secret is created as a file with the value of the secret as its content.
+
+Secrets are not encrypted, they are only encoded. So anyone can decode them.
+Secrets are not encrypted in ETCD, so consider enabling encrypting secret data at Rest: https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data
+
+Anyone able to create pods/deployments in the same namespace can access the secrets.
+
+Consider third-party secrets store providers: AWS, Azure, GCP, Vault Provider.
+
+### Encrypting secret data at rest
+
+This is a demo:
+
+```bash
+kubectl create secret generic my-secret --from-literal=key1=supersecret
+```
+
+But how is this data stored in the ETCD server?
+
+First step is to install `etcdctl` command:
+
+```bash
+apt-get install etcd-client
+```
+
+If you do not want to install it, you can also run `etcdctl` command into the pod where the ETCD is running.
+
+```bash
+kubectl get pods -n kube-system
+```
+
+You will have the `etcd-controlplane` pod.
 
 
