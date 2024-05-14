@@ -1254,4 +1254,111 @@ kubectl get pods -n kube-system
 
 You will have the `etcd-controlplane` pod.
 
+### Multi-container Pods
+
+Sometimes you have to add a logger to a pod, so you use two containers. They are created and destroyed together, and they share the same network space (localhost) and storage, so you don't have to establish volume sharing or services between them to enable communication. 
+`containers` is an array an we can add more than one container per pod.
+
+
+#### Init Containers
+
+In a multi-container pod, each container is expected to run a process that stays alive as long as the POD's lifecycle. For example in the multi-container pod that we talked about earlier that has a web application and logging agent, both the containers are expected to stay alive at all times. The process running in the log agent container is expected to stay alive as long as the web application is running. If any of them fails, the POD restarts.
+
+But at times you may want to run a process that runs to completion in a container. For example a process that pulls a code or binary from a repository that will be used by the main web application. That is a task that will be run only  one time when the pod is first created. Or a process that waits  for an external service or database to be up before the actual application starts. That's where initContainers comes in.
+
+An initContainer is configured in a pod like all other containers, except that it is specified inside a initContainers section,  like this:
+
+```yml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp-pod
+  labels:
+    app: myapp
+spec:
+  containers:
+  - name: myapp-container
+    image: busybox:1.28
+    command: ['sh', '-c', 'echo The app is running! && sleep 3600']
+  initContainers:
+  - name: init-myservice
+    image: busybox
+    command: ['sh', '-c', 'git clone <some-repository-that-will-be-used-by-application> ; done;']
+```
+
+
+When a POD is first created the initContainer is run, and the process in the initContainer must run to a completion before the real container hosting the application starts. 
+
+You can configure multiple such initContainers as well, like how we did for multi-containers pod. In that case each init container is run one at a time in sequential order.
+
+If any of the initContainers fail to complete, Kubernetes restarts the Pod repeatedly until the Init Container succeeds.
+
+## Cluster Maintenance
+
+Topics: operating systems upgrades, losing a node from the cluster, apply patches, kubernetes releases and versions, best practices around upgrading.
+Perform an end-to-end upgrade on a cluster, and also apply a disaster recovery scenario.
+
+### Node OS Upgrades
+
+`pod-eviction-timeout` is 5 minutes by default and is the time the kubelet waits before deploying again a pod on another node when the previous node is offline, but only if the pod is part of a replicaSet.
+If you don't have replicaSet for a pod, you can drain the node before putting it offline with `kubectl drain node-1` and the pods gracefully terminated and recreated on another node. You can then put the node offline and do the upgrades. When the node comes back online it is still unschedulable, so you need to uncordon it with `kubectl uncordon node-1`.
+There is also `kubectl cordon node-2`: this simply makes sure that new pods are not scheduled on this pod, but this command does not move existing pods to other nodes.
+
+### Kubernetes releases and versions
+
+If you prompt `kubectl get nodes` you'll see the Kubernetes version number:
+
+Example:
+```
+v1.13.4
+```
+
+kube-apiserver, controller-manager, kube-scheduler, kubelet, kube-proxy and kubectl all have the same kubernetes version (core control-plane components). etcd-cluster and core-dns have their own versions as they are separate projects.
+
+### Cluster Upgrade Process
+
+Let's focus on the core control-plane components. Components cannot be at versions higher than the kube-apiserver. They can be at X-1 (controller-manager and kube-scheduler) or at most X-2 versions lower (kubelet and kube-proxy).
+
+When should you upgrade?
+
+Only the last three minor versions are supported. So if kubernetes releases v1.13, v1.10 becomes unsupported. Say you have version v1.11, and v1.13 comes out. Should you upgrade to v1.13? No, because v1.11 is still supported. When v1.14 comes out, update one at a time, so upgrade to v1.12.
+
+`kubeadm upgrade plan` and `kubeadm upgrade apply` to upgrade master and worker nodes.
+
+First you upgrade your master node, and then the worker nodes. When upgrading the master, your app is still running because the workers are still running. Once the upgrade on master is completed, upgrade the worker nodes. Now the pods are down and users are not able to access the application. But how to avoid downtime? Upgrade one node at a time.
+
+But first you have to update kubeadm:
+
+```md
+apt-get upgrade -y kubeadm=1.12.0-00
+kubeadm upgrade apply v1.12.0
+# then upgrade on worker nodes as well
+
+# upgrade kubelet on the master node
+apt-get upgrade -y kubelet=1.12.0-00
+systemctl restart kubelet
+
+# then worker nodes, one at a time
+# first move the workload on other nodes
+kubectl drain node-1
+
+# the on node-1
+apt-get upgrade -y kubeadm=1.12.0-00
+apt-get upgrade -y kubelet=1.12.0-00
+kubeadm upgrade node config --kubelet-version v1.12.0
+systemctl restart kubelet
+
+# and uncordon it on master
+kubectl uncordon node-1
+```
+
+
+
+
+
+
+
+
+
 
