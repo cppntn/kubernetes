@@ -1294,7 +1294,7 @@ You can configure multiple such initContainers as well, like how we did for mult
 
 If any of the initContainers fail to complete, Kubernetes restarts the Pod repeatedly until the Init Container succeeds.
 
-## Cluster Maintenance
+## Cluster Mainteance
 
 Topics: operating systems upgrades, losing a node from the cluster, apply patches, kubernetes releases and versions, best practices around upgrading.
 Perform an end-to-end upgrade on a cluster, and also apply a disaster recovery scenario.
@@ -1330,7 +1330,7 @@ First you upgrade your master node, and then the worker nodes. When upgrading th
 
 But first you have to update kubeadm:
 
-```md
+```
 apt-get upgrade -y kubeadm=1.12.0-00
 kubeadm upgrade apply v1.12.0
 # then upgrade on worker nodes as well
